@@ -4,6 +4,8 @@ package main
 import (
     "database/sql"
     "fmt"
+    "os"
+    "log"
 
     _ "github.com/mattn/go-sqlite3"
 )
@@ -14,7 +16,12 @@ const PW_TABLE_NAME  = "pw_passwords"
 
 
 func main() {
-    fmt.Println("hello")
+    create_tables()
+    // Check for password in env
+    var PW = os.Getenv("PWMAN_PW")
+    if len(PW) == 0 {
+        log.Fatalln("No PWMAN_PW env variable was set.") 
+    }
 
     db, err := sql.Open("sqlite3", "store.db")
     if err != nil {
@@ -23,14 +30,16 @@ func main() {
     defer db.Close()
 
     if !is_table_exists(RES_TABLE_NAME, db) {
-        fmt.Println("table " + RES_TABLE_NAME + " does not exists")
+        fmt.Println("table <" + RES_TABLE_NAME + "> does not exists")
         return 
     }
 
     if !is_table_exists(PW_TABLE_NAME, db) {
-        fmt.Println("table " + PW_TABLE_NAME + " does not exists")
+        fmt.Println("table <" + PW_TABLE_NAME + "> does not exists")
         return 
     }
+
+
 
 }
 
@@ -48,3 +57,28 @@ func is_table_exists(tablename string, db *sql.DB) bool {
     }
     return false
 }
+
+
+//func create_tables(db *sql.DB) {
+func create_tables() {
+    res_query := "create table " + RES_TABLE_NAME + "(id INTEGER PRIMARY KEY, resource TEXT)"
+    pw_query  := "create table " + PW_TABLE_NAME + `(
+        id INTEGER PRIMARY KEY, 
+         resource_id INTEGER, 
+         username TEXT, 
+         password TEXT, 
+         type TEXT, 
+         FOREIGN KEY(resource_id) REFERENCES pw_resources(id)
+    )`
+
+    fmt.Println(res_query)
+    fmt.Println(pw_query)
+
+    return 
+}
+
+
+//func create_table(query string, db *sql.DB) {
+//    return 
+//}
+
