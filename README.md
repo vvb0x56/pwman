@@ -1,2 +1,2 @@
 # pwman
-Very Simple CLI password manager
+Very Simple CLI password manager.
