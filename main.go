@@ -14,14 +14,42 @@ const RES_TABLE_NAME = "pw_resources"
 const PW_TABLE_NAME  = "pw_passwords"
 
 
+type Resource struct {
+    name    string
+}
+
+
+type Password struct {
+    user    string
+    passwd  string
+    app     string
+}
+
+
 func main() {
     // Collect arguments 
-    var cli_pw        string
-    var db_name       string
-    var creat_tables  bool
-    flag.StringVar(&cli_pw, "key","",         "key to decrypt passwords")
-    flag.StringVar(&db_name,"db", "store.db", "name for sqlite3 db file")
-    flag.BoolVar(&ls_res,   "ls", false,      "list available resources")
+    var cli_pw       string
+    var db_name      string
+    var ls_res       bool
+    var add_res      bool
+    var resource     Resource 
+    var password     Password
+    var creat_tables bool
+
+    flag.StringVar(&cli_pw,  "key",  "",         "key to decrypt passwords")
+    flag.StringVar(&db_name, "db",   "store.db", "name for sqlite3 db file")
+    flag.BoolVar(&ls_res,    "ls",   false,      "list available resources")
+    //flag.IntVar(&ls_pw,     "lspw", false,      "list available passwords")
+
+    // Add 
+    flag.BoolVar(&add_res,        "a",  false,      "add resource to db")
+
+    // Data
+    flag.StringVar(&resource.name,  "r",  "", "resource name or id")
+    flag.StringVar(&password.user,  "u",  "", "user to add ")
+    flag.StringVar(&password.passwd,"p",  "", "passwd to add ")
+    flag.StringVar(&password.app,   "t",  "", "type, port or app")
+
     flag.BoolVar(&creat_tables, "create-tables", false,      
                  "create tables (you need to drop it if exists)")
     flag.Parse()
@@ -39,6 +67,12 @@ func main() {
         check_tables(db_name, db)
         return 
     }
+
+    // ls all available resoureces without passwords
+    if ls_res {
+        print_resources(db)
+        return 
+    }
     
     // Check for decrypt password 
     var PW string
@@ -53,6 +87,10 @@ func main() {
     if len(PW) == 0 {
         fmt.Println("No decrypt password was set, consider to use -key key or set PWMAN_PW var")
         os.Exit(1)
+    }
+
+    if add_res {
+        add_password(&resource, &password)
     }
 }
 
@@ -116,4 +154,30 @@ func check_tables(db_name string, db *sql.DB) {
     } else {
         fmt.Println("table <" + PW_TABLE_NAME + "> already exists in [" + db_name + "], do nothing.")
     }
+}
+
+
+func print_resources(db *sql.DB) {
+    query := "SELECT id, resource FROM " + RES_TABLE_NAME 
+    rows, err := db.Query(query)
+    if err != nil {
+        panic(err)
+    }
+    defer rows.Close()
+
+    for rows.Next() {
+        var (
+            id       int
+            resource string
+        )
+        if err := rows.Scan(&id, &resource); err != nil {
+            panic(err)
+        }
+        fmt.Printf("%d: %s\n", id, resource)
+    }
+}
+
+
+func add_password(res *Resource, pass *Password) {
+    return 
 }
