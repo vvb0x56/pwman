@@ -15,15 +15,11 @@ const RES_TABLE_NAME = "pw_resources"
 const PW_TABLE_NAME  = "pw_passwords"
 
 
-type Resource struct {
-    name    string
-}
-
-
-type Password struct {
-    user    string
-    passwd  string
-    app     string
+type PasswordRecord struct {
+    resource string
+    user     string
+    passwd   string
+    app      string
 }
 
 
@@ -31,28 +27,20 @@ func main() {
     // Collect arguments 
     var cli_pw       string
     var db_name      string
-    var ls_res       bool
-    var add_res      bool
-    var resource     Resource 
-    var password     Password
+    var ls       bool
+    var add      bool
     var creat_tables bool
 
     flag.StringVar(&cli_pw,  "key",  "",         "key to decrypt passwords")
     flag.StringVar(&db_name, "db",   "store.db", "name for sqlite3 db file")
-    flag.BoolVar(&ls_res,    "ls",   false,      "list available resources")
-    //flag.IntVar(&ls_pw,     "lspw", false,      "list available passwords")
-
-    // Add 
-    flag.BoolVar(&add_res,        "a",  false,      "add resource to db")
-
-    // Data
-    flag.StringVar(&resource.name,  "r",  "", "resource name or id")
-    flag.StringVar(&password.user,  "u",  "", "user to add ")
-    flag.StringVar(&password.passwd,"p",  "", "passwd to add ")
-    flag.StringVar(&password.app,   "t",  "", "type, port or app")
-
     flag.BoolVar(&creat_tables, "create-tables", false,      
                  "create tables (you need to drop it if exists)")
+    //flag.IntVar(&ls_pw,     "lspw", false,      "list available passwords")
+
+    // LS 
+    flag.BoolVar(&ls,    "ls",   false,      "list available resources")
+    // ADD 
+    flag.BoolVar(&add, "a",  false, "add new password: resource name/id username password type(web)")
     flag.Parse()
 
 
@@ -70,7 +58,7 @@ func main() {
     }
 
     // ls all available resoureces without passwords
-    if ls_res {
+    if ls {
         print_resources(db)
         return 
     }
@@ -90,8 +78,25 @@ func main() {
         os.Exit(1)
     }
 
-    if add_res {
-        add_password(&resource, &password)
+    // ADD 
+    if add {
+        if len(flag.Args()) < 3 || len(flag.Args()) > 4 {
+            flag.Usage()
+            return
+        }
+
+        var record PasswordRecord
+
+        record.resource = flag.Arg(0)
+        record.user     = flag.Arg(1)
+        record.passwd   = flag.Arg(2)
+        record.app      = "web" // default
+
+        if len(flag.Args()) == 4 {
+            record.app = flag.Arg(3)
+        }
+
+        add_password(&record, db)
         return 
     }
 }
@@ -180,19 +185,52 @@ func print_resources(db *sql.DB) {
 }
 
 
-func add_password(resource *Resource, password *Password) {
-    if _, err := strconv.Atoi(resource.name); err == nil {
-        fmt.Println("res name is id")
-        // then we'll search resource and add passwd only
+func add_password(record *PasswordRecord, db *sql.DB) {
+    var id    int 
+    var query string
 
-        return
-    } 
+    if _, err := strconv.Atoi(record.resource); err == nil {
+        query = "SELECT id FROM " + RES_TABLE_NAME + " WHERE id = ?"
+    } else {
+        query = "SELECT id FROM " + RES_TABLE_NAME + " WHERE resource = ?"
+    }
 
-    /// else we need to check if resource is already there by name, and if not
-    // we need to create it, then add password for res id 
+    // find id for resource or create it 
+    if err := db.QueryRow(query, record.resource).Scan(&id); err != nil {
+        if err == sql.ErrNoRows {
+            fmt.Println("no resource found, creating it..")
+            id, err = insert_resource(record.resource, db)
+            if err != nil {
+                panic(err)
+            }
+        } else {
+            panic(err)
+        }
+    }
 
-    fmt.Println("add_password")
-    //fmt.Println(resource.name + " " + pass.user + " " + pass.passwd + " " + pass.app)
-    fmt.Println(resource.name + " " + password.user + " " + password.passwd + " " + password.app)
-    return 
+    // create password for resource id 
+
+    fmt.Println("res name is id", id)
+    _, err := insert_password(id, record, db)
+    if err != nil {
+        panic(err)
+    }
+}
+
+
+func insert_resource(resource string, db *sql.DB) (id int, err error) {
+    err = db.QueryRow("INSERT INTO " + RES_TABLE_NAME + "(resource) VALUES(?) RETURNING id", 
+                       resource).Scan(&id)
+    return id, err
+}
+
+
+func insert_password(id int, record *PasswordRecord, db *sql.DB) (res sql.Result, err error) {
+    res, err = db.Exec("INSERT INTO " + PW_TABLE_NAME + `(resource_id, username, password, type) 
+                        VALUES($1, $2, $3, $4)`, 
+                        id, 
+                        record.user, 
+                        record.passwd, 
+                        record.app)
+    return res, err
 }
