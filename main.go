@@ -6,6 +6,7 @@ import (
     "fmt"
     "os"
     "flag"
+    "strconv"
 
     _ "github.com/mattn/go-sqlite3"
 )
@@ -91,6 +92,7 @@ func main() {
 
     if add_res {
         add_password(&resource, &password)
+        return 
     }
 }
 
@@ -178,6 +180,19 @@ func print_resources(db *sql.DB) {
 }
 
 
-func add_password(res *Resource, pass *Password) {
+func add_password(resource *Resource, password *Password) {
+    if _, err := strconv.Atoi(resource.name); err == nil {
+        fmt.Println("res name is id")
+        // then we'll search resource and add passwd only
+
+        return
+    } 
+
+    /// else we need to check if resource is already there by name, and if not
+    // we need to create it, then add password for res id 
+
+    fmt.Println("add_password")
+    //fmt.Println(resource.name + " " + pass.user + " " + pass.passwd + " " + pass.app)
+    fmt.Println(resource.name + " " + password.user + " " + password.passwd + " " + password.app)
     return 
 }
