@@ -28,7 +28,9 @@ func main() {
     var cli_pw       string
     var db_name      string
     var ls       bool
+    var lspw     bool
     var add      bool
+    var rm       bool
     var creat_tables bool
 
     flag.StringVar(&cli_pw,  "key",  "",         "key to decrypt passwords")
@@ -37,10 +39,12 @@ func main() {
                  "create tables (you need to drop it if exists)")
     //flag.IntVar(&ls_pw,     "lspw", false,      "list available passwords")
 
-    // LS 
-    flag.BoolVar(&ls,    "ls",   false,      "list available resources")
+    // LS LSPW
+    flag.BoolVar(&ls,   "ls",  false, "list available resources")
+    flag.BoolVar(&lspw, "lspw",false, "list passwords")
     // ADD 
     flag.BoolVar(&add, "a",  false, "add new password: resource name/id username password type(web)")
+    flag.BoolVar(&rm,  "rm",  false, "remove resource")
     flag.Parse()
 
 
@@ -78,10 +82,22 @@ func main() {
         os.Exit(1)
     }
 
+    // LSPW
+    if lspw {
+        if len(flag.Args()) == 0 {
+            print_passwords(db)
+            return
+        }
+
+        print_password(flag.Arg(0), db)
+
+        return
+    }
+
     // ADD 
     if add {
         if len(flag.Args()) < 3 || len(flag.Args()) > 4 {
-            flag.Usage()
+            fmt.Println("..Usage: ./pwman -a RES_ID USER PASSWD APP")
             return
         }
 
@@ -97,6 +113,20 @@ func main() {
         }
 
         add_password(&record, db)
+        return 
+    }
+
+    // RM 
+    if rm {
+        if len(flag.Args()) != 1 {
+            fmt.Println("..Need an id of the removing resource") 
+            return
+        }
+        if _, err := strconv.Atoi(flag.Arg(0)); err != nil {
+            fmt.Println("..Need an numeric id.") 
+            return
+        }
+        remove_resource(flag.Arg(0), db)
         return 
     }
 }
@@ -208,8 +238,6 @@ func add_password(record *PasswordRecord, db *sql.DB) {
         }
     }
 
-    // create password for resource id 
-
     fmt.Println("res name is id", id)
     _, err := insert_password(id, record, db)
     if err != nil {
@@ -233,4 +261,99 @@ func insert_password(id int, record *PasswordRecord, db *sql.DB) (res sql.Result
                         record.passwd, 
                         record.app)
     return res, err
+}
+
+
+func print_passwords(db *sql.DB) {
+    query := `SELECT R.id, P.id, R.resource, P.username, P.password, P.type  
+              FROM ` + RES_TABLE_NAME + ` R 
+                LEFT JOIN ` + PW_TABLE_NAME + ` P ON R.id=P.resource_id 
+              ORDER BY R.resource`
+
+    rows, err := db.Query(query)
+    if err != nil {
+        panic(err)
+    }
+    defer rows.Close()
+
+    for rows.Next() {
+        var (
+            res_id sql.NullInt64 
+            pw_id  sql.NullInt64 
+            res    sql.NullString
+            user   sql.NullString
+            passw  sql.NullString
+            app    sql.NullString
+        )
+        if err := rows.Scan(&res_id, &pw_id, &res, &user, &passw, &app); err != nil {
+            panic(err)
+        }
+        if pw_id.Int64 == 0 {
+            fmt.Printf("%d %s:\tNO CREDENTIALS\n", 
+                        res_id.Int64, res.String)
+            continue
+        }
+        fmt.Printf("%d %s:\t%s\t%s\t%s\t(%d)\n", 
+                    res_id.Int64, res.String, 
+                    user.String, passw.String, 
+                    app.String, pw_id.Int64)
+    }
+    return 
+}
+
+
+func print_password(arg string, db *sql.DB) {
+    query := `SELECT R.id, P.id, R.resource, P.username, P.password, P.type 
+              FROM ` + RES_TABLE_NAME + ` R 
+                LEFT JOIN ` + PW_TABLE_NAME + ` P ON R.id=P.resource_id `
+
+    if _, err := strconv.Atoi(arg); err == nil {
+        query += " WHERE R.id = ?"
+    } else {
+        query += " WHERE R.resource = ?"
+    }
+    query += " ORDER BY R.resource"
+    rows, err := db.Query(query, arg)
+    if err != nil {
+        panic(err)
+    }
+    defer rows.Close()
+
+    for rows.Next() {
+        var (
+            res_id sql.NullInt64 
+            pw_id  sql.NullInt64 
+            res    sql.NullString
+            user   sql.NullString
+            passw  sql.NullString
+            app    sql.NullString
+        )
+        if err := rows.Scan(&res_id, &pw_id, &res, &user, &passw, &app); err != nil {
+            panic(err)
+        }
+        if pw_id.Int64 == 0 {
+            fmt.Printf("%d %s:\tNO CREDENTIALS\n", 
+                        res_id.Int64, res.String)
+            continue
+        }
+        fmt.Printf("%d %s:\t%s\t%s\t%s\t(%d)\n", 
+                    res_id.Int64, res.String, 
+                    user.String, passw.String, 
+                    app.String, pw_id.Int64)
+    }
+    return
+}
+
+func remove_resource(id string, db *sql.DB) {
+    res_query := "DELETE FROM pw_resources WHERE id = ?"
+    pw_query  := "DELETE FROM pw_passwords WHERE resource_id = ?"
+    _, err := db.Exec(res_query, id) 
+    if err != nil {
+        panic(err)
+    }
+    _, err = db.Exec(pw_query, id) 
+    if err != nil {
+        panic(err)
+    }
+    return
 }
