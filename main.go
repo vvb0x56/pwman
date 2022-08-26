@@ -5,15 +5,27 @@ import (
     "database/sql"
     "fmt"
     "os"
+    "io"
     "flag"
     "strconv"
+    "crypto/aes"
+    "crypto/cipher"
+    "crypto/sha1"
+    "crypto/rand"
+    "encoding/hex"
+
+    "golang.org/x/crypto/pbkdf2"
 
     _ "github.com/mattn/go-sqlite3"
+
 )
 
 const RES_TABLE_NAME = "pw_resources"
 const PW_TABLE_NAME  = "pw_passwords"
+const SALT           = "C2X31234H991K331"
+const KEY_LEN        = 32  // to use AES-256
 
+var PW_KEY []byte
 
 type PasswordRecord struct {
     resource string
@@ -57,17 +69,17 @@ func main() {
 
     // Create tables can be done without password, so let's handle it first
     if creat_tables {
-        check_tables(db_name, db)
+        checkTables(db_name, db)
         return 
     }
 
     // ls all available resoureces without passwords
     if ls {
-        print_resources(db)
+        printRes(db)
         return 
     }
     
-    // Check for decrypt password 
+    // Is encryption password set?
     var PW string
     if len(cli_pw) > 0 {
         PW = cli_pw
@@ -82,15 +94,16 @@ func main() {
         os.Exit(1)
     }
 
+    // make PW len eq to 32, as required for aes
+    PW_KEY = pbkdf2.Key([]byte(PW), []byte(SALT), 4096, KEY_LEN, sha1.New)
+
     // LSPW
     if lspw {
         if len(flag.Args()) == 0 {
-            print_passwords(db)
+            showPW(db, "")
             return
         }
-
-        print_password(flag.Arg(0), db)
-
+        showPW(db, flag.Arg(0))
         return
     }
 
@@ -105,14 +118,14 @@ func main() {
 
         record.resource = flag.Arg(0)
         record.user     = flag.Arg(1)
-        record.passwd   = flag.Arg(2)
+        record.passwd   = encrypt(flag.Arg(2), PW_KEY)
         record.app      = "web" // default
 
         if len(flag.Args()) == 4 {
             record.app = flag.Arg(3)
         }
 
-        add_password(&record, db)
+        addPW(&record, db)
         return 
     }
 
@@ -126,13 +139,60 @@ func main() {
             fmt.Println("..Need an numeric id.") 
             return
         }
-        remove_resource(flag.Arg(0), db)
+        delResource(flag.Arg(0), db)
         return 
     }
 }
 
 
-func is_table_exists(tablename string, db *sql.DB) bool {
+func encrypt(stringToEncrypt string, key []byte)(encryptedString string) {
+    plaintext := []byte(stringToEncrypt)
+
+    block, err := aes.NewCipher(key)
+    if err != nil {
+        panic(err.Error())
+    }
+
+    aesGCM, err := cipher.NewGCM(block)
+    if err != nil {
+        panic(err.Error())
+    }
+
+    nonce := make([]byte, aesGCM.NonceSize())
+    if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
+        panic(err.Error())
+    }
+
+    ciphertext := aesGCM.Seal(nonce, nonce, plaintext, nil)
+
+    return hex.EncodeToString(ciphertext)
+}
+
+func decrypt(encryptedString string, key []byte) (decryptedString string) {
+    enc, _ := hex.DecodeString(encryptedString)
+
+    block, err := aes.NewCipher(key)
+    if err != nil {
+        panic(err.Error())
+    }
+
+    aesGCM, err := cipher.NewGCM(block)
+    if err != nil {
+        panic(err.Error())
+    }
+
+    nonceSize := aesGCM.NonceSize()
+
+    nonce, ciphertext := enc[:nonceSize], enc[nonceSize:]
+
+    plaintext, err := aesGCM.Open(nil, nonce, ciphertext, nil)
+    if err != nil {
+        return err.Error()
+    }
+    return string(plaintext)
+}
+
+func isTablePresents(tablename string, db *sql.DB) bool {
     var count int
     // Right way to handle QueryRow
     // https://www.calhoun.io/querying-for-a-single-record-using-gos-database-sql-package/
@@ -147,25 +207,25 @@ func is_table_exists(tablename string, db *sql.DB) bool {
 }
 
 
-func create_default_table(table string, db *sql.DB) {
+func createTables(table string, db *sql.DB) {
     var query string
     switch {
     case table == RES_TABLE_NAME:
-        query = "CREATE TABLE IF NOT EXISTS " + RES_TABLE_NAME + `(
+        query = fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
             resource TEXT UNIQUE
-        )`
+        )`, RES_TABLE_NAME)
     case table == PW_TABLE_NAME:
-        query = "CREATE TABLE IF NOT EXISTS " + PW_TABLE_NAME + `(
+        query = fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
              id INTEGER PRIMARY KEY AUTOINCREMENT, 
              resource_id INTEGER, 
              username TEXT, 
              password TEXT, 
              type TEXT, 
              FOREIGN KEY(resource_id) REFERENCES pw_resources(id)
-        )`
+        )`, PW_TABLE_NAME)
     default:
-        fmt.Println("Unknown table name in create_default_table: " + table)
+        fmt.Printf("Unknown table name in createTable: %s\n", table)
         return
     }
 
@@ -176,26 +236,26 @@ func create_default_table(table string, db *sql.DB) {
 }
 
 
-func check_tables(db_name string, db *sql.DB) {
+func checkTables(db_name string, db *sql.DB) {
     // Create default tables if not exists
-    if !is_table_exists(RES_TABLE_NAME, db) {
-        fmt.Println("table <" + RES_TABLE_NAME + "> does not exists in [" + db_name + "], creating it..")
-        create_default_table(RES_TABLE_NAME, db)
+    if !isTablePresents(RES_TABLE_NAME, db) {
+        createTables(RES_TABLE_NAME, db)
+        fmt.Printf("created table [%s] in <%s>, done.", RES_TABLE_NAME, db_name)
     } else {
-        fmt.Println("table <" + RES_TABLE_NAME + "> already exists in [" + db_name + "], do nothing.")
+        fmt.Printf("table [%s] already in <%s>, do nothing.", RES_TABLE_NAME, db_name)
     }
 
-    if !is_table_exists(PW_TABLE_NAME, db) {
-        fmt.Println("table <" + PW_TABLE_NAME + "> does not exists in [" + db_name + "], creating it..")
-        create_default_table(PW_TABLE_NAME, db)
+    if !isTablePresents(PW_TABLE_NAME, db) {
+        createTables(PW_TABLE_NAME, db)
+        fmt.Printf("created table [%s] in <%s>, done.", PW_TABLE_NAME, db_name)
     } else {
-        fmt.Println("table <" + PW_TABLE_NAME + "> already exists in [" + db_name + "], do nothing.")
+        fmt.Printf("table [%s] already in <%s>, do nothing.", PW_TABLE_NAME, db_name)
     }
 }
 
 
-func print_resources(db *sql.DB) {
-    query := "SELECT id, resource FROM " + RES_TABLE_NAME 
+func printRes(db *sql.DB) {
+    query := fmt.Sprintf("SELECT id, resource FROM %s", RES_TABLE_NAME)
     rows, err := db.Query(query)
     if err != nil {
         panic(err)
@@ -212,24 +272,27 @@ func print_resources(db *sql.DB) {
         }
         fmt.Printf("%d: %s\n", id, resource)
     }
+    if err = rows.Err(); err != nil {
+        panic(err.Error())
+    }
 }
 
 
-func add_password(record *PasswordRecord, db *sql.DB) {
+func addPW(record *PasswordRecord, db *sql.DB) {
     var id    int 
     var query string
 
     if _, err := strconv.Atoi(record.resource); err == nil {
-        query = "SELECT id FROM " + RES_TABLE_NAME + " WHERE id = ?"
+        query = fmt.Sprintf("SELECT id FROM %s WHERE id = ?", RES_TABLE_NAME)
     } else {
-        query = "SELECT id FROM " + RES_TABLE_NAME + " WHERE resource = ?"
+        query = fmt.Sprintf("SELECT id FROM %s WHERE resource = ?", RES_TABLE_NAME)
     }
 
     // find id for resource or create it 
     if err := db.QueryRow(query, record.resource).Scan(&id); err != nil {
         if err == sql.ErrNoRows {
             fmt.Println("no resource found, creating it..")
-            id, err = insert_resource(record.resource, db)
+            id, err = insertRes(record.resource, db)
             if err != nil {
                 panic(err)
             }
@@ -237,123 +300,125 @@ func add_password(record *PasswordRecord, db *sql.DB) {
             panic(err)
         }
     }
-
-    fmt.Println("res name is id", id)
-    _, err := insert_password(id, record, db)
-    if err != nil {
-        panic(err)
-    }
+    insertPW(id, record, db)
 }
 
 
-func insert_resource(resource string, db *sql.DB) (id int, err error) {
-    err = db.QueryRow("INSERT INTO " + RES_TABLE_NAME + "(resource) VALUES(?) RETURNING id", 
-                       resource).Scan(&id)
+func insertRes(resource string, db *sql.DB) (id int, err error) {
+    query := fmt.Sprintf("INSERT INTO %s(resource) VALUES(?) RETURNING id", RES_TABLE_NAME)
+    err = db.QueryRow(query, resource).Scan(&id)
     return id, err
 }
 
 
-func insert_password(id int, record *PasswordRecord, db *sql.DB) (res sql.Result, err error) {
-    res, err = db.Exec("INSERT INTO " + PW_TABLE_NAME + `(resource_id, username, password, type) 
-                        VALUES($1, $2, $3, $4)`, 
-                        id, 
-                        record.user, 
-                        record.passwd, 
-                        record.app)
-    return res, err
-}
-
-
-func print_passwords(db *sql.DB) {
-    query := `SELECT R.id, P.id, R.resource, P.username, P.password, P.type  
-              FROM ` + RES_TABLE_NAME + ` R 
-                LEFT JOIN ` + PW_TABLE_NAME + ` P ON R.id=P.resource_id 
-              ORDER BY R.resource`
-
-    rows, err := db.Query(query)
+func insertPW(id int, record *PasswordRecord, db *sql.DB) {
+    query := fmt.Sprintf("INSERT INTO %s(resource_id, username, password, type) VALUES($1, $2, $3, $4)", PW_TABLE_NAME)
+    _, err := db.Exec(query, id, record.user, record.passwd, record.app)
     if err != nil {
-        panic(err)
-    }
-    defer rows.Close()
-
-    for rows.Next() {
-        var (
-            res_id sql.NullInt64 
-            pw_id  sql.NullInt64 
-            res    sql.NullString
-            user   sql.NullString
-            passw  sql.NullString
-            app    sql.NullString
-        )
-        if err := rows.Scan(&res_id, &pw_id, &res, &user, &passw, &app); err != nil {
-            panic(err)
-        }
-        if pw_id.Int64 == 0 {
-            fmt.Printf("%d %s:\tNO CREDENTIALS\n", 
-                        res_id.Int64, res.String)
-            continue
-        }
-        fmt.Printf("%d %s:\t%s\t%s\t%s\t(%d)\n", 
-                    res_id.Int64, res.String, 
-                    user.String, passw.String, 
-                    app.String, pw_id.Int64)
-    }
+        panic(err.Error())
+    }   
     return 
 }
 
+func showPW(db *sql.DB, arg string) {
+    query := fmt.Sprintf(`SELECT R.id, P.id, R.resource, P.username, P.password, P.type 
+        FROM %s R 
+          LEFT JOIN %s P ON R.id=P.resource_id `, 
+        RES_TABLE_NAME, PW_TABLE_NAME)
 
-func print_password(arg string, db *sql.DB) {
-    query := `SELECT R.id, P.id, R.resource, P.username, P.password, P.type 
-              FROM ` + RES_TABLE_NAME + ` R 
-                LEFT JOIN ` + PW_TABLE_NAME + ` P ON R.id=P.resource_id `
-
-    if _, err := strconv.Atoi(arg); err == nil {
-        query += " WHERE R.id = ?"
-    } else {
-        query += " WHERE R.resource = ?"
+    if len(arg) != 0 {
+        if _, err := strconv.Atoi(arg); err == nil {
+            query += " WHERE R.id = ?"
+        } else {
+            query += " WHERE R.resource = ?"
+        }
     }
     query += " ORDER BY R.resource"
+
     rows, err := db.Query(query, arg)
     if err != nil {
         panic(err)
     }
     defer rows.Close()
 
+    type P struct {
+        rid, pid         sql.NullInt64 
+        res, us, pw, app sql.NullString
+        pwdec            string
+    }
+    var Pmlens = [7]int{0, 0, 0, 0, 0, 0, 0}
+
+    var Ps []P
+    
     for rows.Next() {
-        var (
-            res_id sql.NullInt64 
-            pw_id  sql.NullInt64 
-            res    sql.NullString
-            user   sql.NullString
-            passw  sql.NullString
-            app    sql.NullString
-        )
-        if err := rows.Scan(&res_id, &pw_id, &res, &user, &passw, &app); err != nil {
+        var p P
+        if err := rows.Scan(&p.rid, &p.pid, &p.res, &p.us, &p.pw, &p.app); err != nil {
             panic(err)
         }
-        if pw_id.Int64 == 0 {
+        if p.pid.Int64 == 0 {
             fmt.Printf("%d %s:\tNO CREDENTIALS\n", 
-                        res_id.Int64, res.String)
+                        p.rid.Int64, p.res.String)
             continue
         }
-        fmt.Printf("%d %s:\t%s\t%s\t%s\t(%d)\n", 
-                    res_id.Int64, res.String, 
-                    user.String, passw.String, 
-                    app.String, pw_id.Int64)
+        p.pwdec = decrypt(p.pw.String, PW_KEY)
+
+        if Pmlens[0] < getIntStrLen(p.rid.Int64) {
+            Pmlens[0] = getIntStrLen(p.rid.Int64)
+        }
+        if Pmlens[1] < getIntStrLen(p.pid.Int64) {
+            Pmlens[1] = getIntStrLen(p.pid.Int64)
+        }
+        if Pmlens[2] < len(p.res.String) {
+            Pmlens[2] = len(p.res.String)
+        }
+        if Pmlens[3] < len(p.us.String) {
+            Pmlens[3] = len(p.us.String)
+        }
+        if Pmlens[4] < len(p.pw.String) {
+            Pmlens[4] = len(p.pw.String)
+        }
+        if Pmlens[5] < len(p.app.String) {
+            Pmlens[5] = len(p.app.String)
+        }
+        if Pmlens[6] < len(p.pwdec) {
+            Pmlens[6] = len(p.pwdec)
+        }
+
+        Ps = append(Ps, p)
+    }
+    if err = rows.Err(); err != nil {
+        panic(err.Error())
+    }
+    for _, p := range Ps {
+        fmt.Printf("%*d %*s:\t%*s\t%*s\t%*s\t(%*d)\n", 
+                    Pmlens[0], p.rid.Int64,  Pmlens[2], p.res.String, 
+                    Pmlens[3], p.us.String,  Pmlens[6], p.pwdec, 
+                    Pmlens[5], p.app.String, Pmlens[1], p.pid.Int64)
     }
     return
 }
 
-func remove_resource(id string, db *sql.DB) {
-    res_query := "DELETE FROM pw_resources WHERE id = ?"
-    pw_query  := "DELETE FROM pw_passwords WHERE resource_id = ?"
-    _, err := db.Exec(res_query, id) 
-    if err != nil {
-        panic(err)
+func getIntStrLen(i int64) (int){
+    if i < 10 {
+        return 1
+    } else if i < 100 {
+        return 2
+    } else if i < 1000 {
+        return 3
+    } else if i < 10000 {
+        return 4
     }
-    _, err = db.Exec(pw_query, id) 
-    if err != nil {
-        panic(err)
+    return 6
+}
+
+func delResource(id string, db *sql.DB) {
+    queries := []string{"DELETE FROM pw_resources WHERE id = ?",
+                        "DELETE FROM pw_passwords WHERE resource_id = ?"}
+    for _, q := range queries {
+        _, err := db.Exec(q, id) 
+        if err != nil {
+            panic(err)
+        }
     }
     return
 }
