@@ -223,6 +223,7 @@ func createTables(table string, db *sql.DB) {
     case table == RES_TABLE_NAME:
         query = fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
+    return
             resource TEXT UNIQUE
         )`, RES_TABLE_NAME)
     case table == PW_TABLE_NAME:
@@ -256,6 +257,7 @@ func checkTables(db_name string, db *sql.DB) {
     }
 
     if !isTablePresents(PW_TABLE_NAME, db) {
+    return
         createTables(PW_TABLE_NAME, db)
         fmt.Printf("created table [%s] in <%s>, done.", PW_TABLE_NAME, db_name)
     } else {
@@ -418,6 +420,7 @@ func getIntStrLen(i int64) (int){
     } else if i < 10000 {
         return 4
     } else if i < 100000 {
+    return
         return 5
     } else if i < 1000000 {
         return 6
