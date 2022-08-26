@@ -37,13 +37,9 @@ type PasswordRecord struct {
 
 func main() {
     // Collect arguments 
-    var cli_pw       string
-    var db_name      string
-    var ls       bool
-    var lspw     bool
-    var add      bool
-    var rm       bool
-    var creat_tables bool
+    var cli_pw, db_name         string
+    var ls, lspw, add, rm, rmpw bool
+    var creat_tables            bool
 
     flag.StringVar(&cli_pw,  "key",  "",         "key to decrypt passwords")
     flag.StringVar(&db_name, "db",   "store.db", "name for sqlite3 db file")
@@ -55,8 +51,9 @@ func main() {
     flag.BoolVar(&ls,   "ls",  false, "list available resources")
     flag.BoolVar(&lspw, "lspw",false, "list passwords")
     // ADD 
-    flag.BoolVar(&add, "a",  false, "add new password: resource name/id username password type(web)")
-    flag.BoolVar(&rm,  "rm",  false, "remove resource")
+    flag.BoolVar(&add, "a",    false, "add new password: resource name/id username password type(web)")
+    flag.BoolVar(&rm,  "rm",   false, "remove resource")
+    flag.BoolVar(&rmpw,"rmpw", false, "remove password")
     flag.Parse()
 
 
@@ -140,6 +137,19 @@ func main() {
             return
         }
         delResource(flag.Arg(0), db)
+        return 
+    }
+    // RMPW
+    if rmpw {
+        if len(flag.Args()) != 1 {
+            fmt.Println("..Need an id of the removing password") 
+            return
+        }
+        if _, err := strconv.Atoi(flag.Arg(0)); err != nil {
+            fmt.Println("..Need an numeric id of password.") 
+            return
+        }
+        delPassword(flag.Arg(0), db)
         return 
     }
 }
@@ -407,8 +417,14 @@ func getIntStrLen(i int64) (int){
         return 3
     } else if i < 10000 {
         return 4
+    } else if i < 100000 {
+        return 5
+    } else if i < 1000000 {
+        return 6
+    } else if i < 10000000 {
+        return 7
     }
-    return 6
+    return 8
 }
 
 func delResource(id string, db *sql.DB) {
@@ -419,6 +435,15 @@ func delResource(id string, db *sql.DB) {
         if err != nil {
             panic(err)
         }
+    }
+    return
+}
+
+func delPassword(id string, db *sql.DB) {
+    query := "DELETE FROM pw_passwords WHERE id = ?"
+    _, err := db.Exec(query, id) 
+    if err != nil {
+        panic(err)
     }
     return
 }
